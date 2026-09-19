@@ -73,9 +73,9 @@ class Tracked<T extends object> {
   /** Timestamps already counted, so a repeated reading is not averaged twice. */
   private readonly counted = new Set<string>()
 
-  /** Returns the confidences this message contributed, in [0, 1]. */
-  observe(readings: readonly T[] | null | undefined): number[] {
-    const confidences: number[] = []
+  /** Confidences this message contributed, in [0, 1], split by the SDK's verdict. */
+  observe(readings: readonly T[] | null | undefined): Confidences {
+    const confidences: Confidences = { settled: [], all: [] }
     if (readings === null || readings === undefined) return confidences
 
     for (const reading of readings) {
@@ -90,7 +90,10 @@ class Tracked<T extends object> {
       if (set(reading, 'stable' as keyof T) === true) this.latestStable = reading
 
       const confidence = set(reading, 'confidence' as keyof T)
-      if (typeof confidence === 'number') confidences.push(confidence / 100)
+      if (typeof confidence === 'number') {
+        confidences.all.push(confidence / 100)
+        if (set(reading, 'stable' as keyof T) === true) confidences.settled.push(confidence / 100)
+      }
     }
     return confidences
   }
@@ -104,6 +107,12 @@ class Tracked<T extends object> {
   get chosen(): T | undefined {
     return this.latestStable ?? this.latest
   }
+}
+
+/** Confidences from one message: those the SDK called settled, and all of them. */
+interface Confidences {
+  settled: number[]
+  all: number[]
 }
 
 export interface VitalsAccumulator {
@@ -125,7 +134,13 @@ export function createVitalsAccumulator(): VitalsAccumulator {
   const pulse = new Tracked<RateReading>()
   const breathing = new Tracked<RateReading>()
   const hrv = new Tracked<HrvReading>()
-  const confidences: number[] = []
+  const settled: number[] = []
+  const everything: number[] = []
+
+  const collect = (from: Confidences): void => {
+    settled.push(...from.settled)
+    everything.push(...from.all)
+  }
 
   return {
     add(metrics) {
@@ -133,9 +148,9 @@ export function createVitalsAccumulator(): VitalsAccumulator {
       // this a pulse-presence check wearing a confidence threshold's clothes:
       // a capture with a clean breathing rate and no pulse would average zero
       // and be discarded as unusable (KV-12).
-      confidences.push(...pulse.observe(metrics.cardio?.pulseRate))
-      confidences.push(...breathing.observe(metrics.breathing?.rate))
-      confidences.push(...hrv.observe(metrics.cardio?.hrv))
+      collect(pulse.observe(metrics.cardio?.pulseRate))
+      collect(breathing.observe(metrics.breathing?.rate))
+      collect(hrv.observe(metrics.cardio?.hrv))
     },
 
     result(durationSec) {
@@ -148,11 +163,22 @@ export function createVitalsAccumulator(): VitalsAccumulator {
         breathingRateBrpm: num(chosenBreathing && set(chosenBreathing, 'value')),
         hrvRmssdMs: num(chosenHrv && set(chosenHrv, 'rmssd')),
         hrvSdnnMs: num(chosenHrv && set(chosenHrv, 'sdnn')),
-        // Averaged across the capture rather than taken from the final reading,
-        // so one good moment at the end cannot make a poor capture look clean.
-        // Still one number for the whole session: whether it should be per
-        // metric, and how "none reported" should differ from "zero", is KV-12.
-        confidence: confidences.length === 0 ? 0 : mean(confidences),
+        // Describes the readings actually being reported (KV-12).
+        //
+        // The values above come from the newest reading the SDK called stable,
+        // so the confidence beside them comes from the same place. Averaging
+        // every reading instead mixes in the ones the SDK distrusted, and those
+        // are scattered through a capture rather than clustered at its start:
+        // across recorded runs that pulled 0.64 down to 0.45, under
+        // MIN_CAPTURE_CONFIDENCE, and threw away captures carrying a settled
+        // pulse and breathing rate.
+        //
+        // Falls back to every reading when the SDK never called one settled —
+        // then that is what the numbers rest on, and saying so is the point.
+        // Still one number for the whole session; whether a metric whose own
+        // confidence is poor should be nulled instead of gating the whole
+        // capture is left open, because it changes when rules fire.
+        confidence: averageOf(settled.length > 0 ? settled : everything),
         // True when the reading being reported is one the SDK itself called
         // settled. Reported per capture; nothing gates on it yet (KV-12).
         stable: reportedStable(chosenPulse, chosenBreathing),
@@ -162,7 +188,9 @@ export function createVitalsAccumulator(): VitalsAccumulator {
   }
 }
 
-const mean = (xs: number[]): number => xs.reduce((s, v) => s + v, 0) / xs.length
+/** Zero for an empty capture: nothing was measured, so nothing is claimed. */
+const averageOf = (xs: number[]): number =>
+  xs.length === 0 ? 0 : xs.reduce((s, v) => s + v, 0) / xs.length
 
 /**
  * Pulse decides when it reported a flag, because every vitals rule leans on it
