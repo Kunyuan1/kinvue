@@ -111,6 +111,30 @@ describe('createVitalsAccumulator', () => {
     expect(result.confidence).toBeCloseTo(0.8, 5)
   })
 
+  it('averages the confidence of the readings it is reporting', () => {
+    // The values reported come from the newest settled reading, so the
+    // confidence beside them comes from the same place. Readings the SDK
+    // distrusted are scattered through a capture, not clustered at its start:
+    // across recorded runs, averaging them in pulled 0.64 down to 0.45 and
+    // discarded captures carrying a settled pulse and breathing rate.
+    const acc = createVitalsAccumulator()
+    acc.add(pulseMsg(64, 90, true))
+    acc.add(pulseMsg(101, 20, false))
+    acc.add(pulseMsg(65, 90, true))
+
+    expect(acc.result(30).confidence).toBeCloseTo(0.9, 5)
+  })
+
+  it('falls back to every reading when the SDK settled on none of them', () => {
+    // Then that is what the numbers rest on, and the confidence should say so
+    // rather than pretend there is nothing to report.
+    const acc = createVitalsAccumulator()
+    acc.add(pulseMsg(101, 40, false))
+    acc.add(pulseMsg(99, 20, false))
+
+    expect(acc.result(30).confidence).toBeCloseTo(0.3, 5)
+  })
+
   it('reports nothing measured as all null with zero confidence', () => {
     const result = createVitalsAccumulator().result(30)
 

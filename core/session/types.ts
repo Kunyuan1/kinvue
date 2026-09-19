@@ -24,7 +24,14 @@ export interface Vitals {
   hrvRmssdMs: number | null
   /** HRV, standard deviation of NN intervals, in milliseconds. */
   hrvSdnnMs: number | null
-  /** Mean of the SDK's own pulse confidence across the capture, 0..1 (KV-12). */
+  /**
+   * The SDK's own confidence in the readings being reported, 0..1 (KV-12).
+   *
+   * Averaged over the readings it called settled — the same ones the values
+   * above come from — falling back to every reading when it settled on none.
+   * Zero when nothing reported a confidence at all, which is not the same as
+   * a measured zero and is still conflated with one; see KV-12.
+   */
   confidence: number
   /**
    * Whether the SDK marked the reading being reported as settled. The flag is
