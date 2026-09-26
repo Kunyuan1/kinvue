@@ -216,8 +216,9 @@ tests/                   Vitest. Covers baseline, scoring, validation, check-in,
 
 ## Local Development
 
-Needs Node `^22.13.0 || ^24.0.0 || >=26.0.0` (`engines` in `package.json`) — the range
-vitest, eslint and jsdom all support. Node 20 cannot run the test suite. CI uses 24.
+Needs Node `^22.22.2 || ^24.15.0 || >=26.0.0` (`engines` in `package.json`) — the range
+every dependency supports, jsdom 30 setting the floor on 22 and 24. Node 20 cannot run
+the test suite. CI uses 24, and Electron 44 itself runs 24.21.
 
 ```bash
 npm install
